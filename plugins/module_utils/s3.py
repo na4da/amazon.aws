@@ -20,6 +20,7 @@ except ImportError:
 
 
 import string
+import itertools
 
 
 def calculate_etag(module, filename, etag, s3, bucket, obj, version=None):
@@ -39,13 +40,21 @@ def calculate_etag(module, filename, etag, s3, bucket, obj, version=None):
             s3_kwargs['VersionId'] = version
 
         with open(filename, 'rb') as f:
-            for part_num in range(1, parts + 1):
-                s3_kwargs['PartNumber'] = part_num
-                try:
-                    head = s3.head_object(**s3_kwargs)
-                except (BotoCoreError, ClientError) as e:
-                    module.fail_json_aws(e, msg="Failed to get head object")
-                digests.append(md5(f.read(int(head['ContentLength']))))
+            s3_kwargs['PartNumber'] = 1
+            try:
+                head_first = s3.head_object(**s3_kwargs)
+            except (BotoCoreError, ClientError) as e:
+                module.fail_json_aws(e, msg="Failed to get head object")
+            lengths = list(itertools.repeat(int(head_first['ContentLength']), parts - 1))
+            for length in lengths:
+                digests.append(md5(f.read(length)))
+
+            s3_kwargs['PartNumber'] = parts
+            try:
+                head_last = s3.head_object(**s3_kwargs)
+            except (BotoCoreError, ClientError) as e:
+                module.fail_json_aws(e, msg="Failed to get head object")
+            digests.append(md5(f.read(int(head_last['ContentLength']))))
 
         digest_squared = md5(b''.join(m.digest() for m in digests))
         return '"{0}-{1}"'.format(digest_squared.hexdigest(), len(digests))
